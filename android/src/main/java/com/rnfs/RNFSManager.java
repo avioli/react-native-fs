@@ -9,6 +9,7 @@ import android.os.StatFs;
 import android.util.Base64;
 import android.support.annotation.Nullable;
 import android.util.SparseArray;
+import android.content.res.AssetManager;
 
 import java.io.File;
 import java.io.OutputStream;
@@ -17,6 +18,7 @@ import java.io.FileOutputStream;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.net.URL;
+import java.io.ByteArrayOutputStream;
 
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContext;
@@ -96,8 +98,64 @@ public class RNFSManager extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * Reads all the bytes (but no more that maxSize) from given input stream through ioBuffer
+   * and returns byte array containing all the read bytes.
+   */
+  static byte[] readBytes(InputStream is, byte[] ioBuffer, int maxSize) throws IOException {
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    copyBytes(baos, is, ioBuffer, maxSize);
+    return baos.toByteArray();
+  }
+
+  /**
+   * Pumps all the bytes (but no more that maxSize) from given input stream through ioBuffer
+   * to given output stream and returns number of moved bytes.
+   */
+  static int copyBytes(
+      OutputStream os,
+      InputStream is,
+      byte[] ioBuffer,
+      int maxSize) throws IOException {
+    int totalSize = 0;
+    while (totalSize < maxSize) {
+      int rc = is.read(ioBuffer, 0, Math.min(maxSize - totalSize, ioBuffer.length));
+      if (rc == -1) {
+        break;
+      }
+      os.write(ioBuffer, 0, rc);
+      totalSize += rc;
+    }
+    return totalSize;
+  }
+
+  private static final int IO_BUFFER_SIZE = 16 * 1024;
+
+  private void readAsset(String mNameInApk, Promise promise) {
+    try {
+      byte[] ioBuffer = new byte[IO_BUFFER_SIZE];
+      AssetManager am = getReactApplicationContext().getAssets();
+
+      final byte[] buffer;
+      try (InputStream assetStream = am.open(mNameInApk, AssetManager.ACCESS_STREAMING)) {
+        buffer = readBytes(assetStream, ioBuffer, Integer.MAX_VALUE);
+      }
+
+      promise.resolve(Base64.encodeToString(buffer, Base64.NO_WRAP));
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      reject(promise, mNameInApk, ex);
+    }
+  }
+
   @ReactMethod
   public void readFile(String filepath, Promise promise) {
+    if (filepath.startsWith("assets://")) {
+      final String mNameInApk = filepath.substring(9);
+      readAsset(mNameInApk, promise);
+      return;
+    }
+
     try {
       File file = new File(filepath);
 
